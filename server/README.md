@@ -1,17 +1,43 @@
-# Mem0 REST API Server
+# server 目录说明
 
-Mem0 provides a REST API server (written using FastAPI). Users can perform all operations through REST endpoints. The API also includes OpenAPI documentation, accessible at `/docs` when the server is running.
+## 文件夹作用
 
-## Features
+`server/` 是一个独立的 Mem0 REST API 服务，适合部署成单独后端接口服务。
 
-- **Create memories:** Create memories based on messages for a user, agent, or run.
-- **Retrieve memories:** Get all memories for a given user, agent, or run.
-- **Search memories:** Search stored memories based on a query.
-- **Update memories:** Update an existing memory.
-- **Delete memories:** Delete a specific memory or all memories for a user, agent, or run.
-- **Reset memories:** Reset all memories for a user, agent, or run.
-- **OpenAPI Documentation:** Accessible via `/docs` endpoint.
+## 真正入口
 
-## Running the server
+- **入口文件：`server/main.py`**
 
-Follow the instructions in the [docs](https://docs.mem0.ai/open-source/features/rest-api) to run the server.
+## 核心职责
+
+1. 基于 FastAPI 暴露记忆相关 REST API
+2. 在服务启动时创建 `Memory` 实例
+3. 使用 pgvector 作为默认向量存储
+4. 提供新增、查询、搜索、更新、删除、重置等接口
+5. 支持 `ADMIN_API_KEY` 鉴权
+
+## 里面文件的用途
+
+| 文件 | 用途 |
+| --- | --- |
+| `main.py` | 服务主入口，定义 FastAPI 应用和所有 REST 接口 |
+| `requirements.txt` | 当前服务所需 Python 依赖 |
+| `.env.example` | 环境变量示例 |
+| `Dockerfile` | 生产构建镜像 |
+| `dev.Dockerfile` | 开发调试镜像 |
+| `docker-compose.yaml` | 启动服务 + PostgreSQL + Neo4j 的开发编排 |
+| `Makefile` | Docker 场景下的快捷命令 |
+
+## 启动注意事项
+
+这个目录不是最轻量的学习入口，因为它默认依赖：
+
+- PostgreSQL / pgvector
+- OpenAI API Key
+- `psycopg[binary]` 运行时支持
+
+如果你只是想先学懂项目，建议先跑：
+
+- `openmemory/api/main.py`
+
+再回来看这里。
