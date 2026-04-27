@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { HiHome, HiMiniRectangleStack } from "react-icons/hi2";
 import { RiApps2AddFill } from "react-icons/ri";
 import { FiRefreshCcw } from "react-icons/fi";
+import { MessageCircle, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CreateMemoryDialog } from "@/app/memories/components/CreateMemoryDialog";
@@ -11,7 +12,6 @@ import { useMemoriesApi } from "@/hooks/useMemoriesApi";
 import Image from "next/image";
 import { useStats } from "@/hooks/useStats";
 import { useAppsApi } from "@/hooks/useAppsApi";
-import { Settings } from "lucide-react";
 import { useConfig } from "@/hooks/useConfig";
 
 export function Navbar() {
@@ -132,6 +132,18 @@ export function Navbar() {
             >
               <RiApps2AddFill />
               Apps
+            </Button>
+          </Link>
+          <Link href="/chat">
+            <Button
+              variant="outline"
+              size="sm"
+              className={`flex items-center gap-2 border-none ${
+                isActive("/chat") ? activeClass : inactiveClass
+              }`}
+            >
+              <MessageCircle className="w-4 h-4" />
+              酒店咨询
             </Button>
           </Link>
           <Link href="/settings">

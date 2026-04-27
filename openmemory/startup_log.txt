@@ -1,0 +1,63 @@
+=== OpenMemory 酒店咨询微信聊天记录启动日志 ===
+时间: 2026-04-27
+
+## 目标
+- 使用FAISS数据库启动前后端
+- 模拟数据：酒店咨询微信聊天记录
+- 无API Key：使用本地sentence-transformers嵌入 + 模拟数据
+- 前端支持聊天功能
+
+## 方案
+1. 安装后端依赖 (fastapi, uvicorn, sqlalchemy等)
+2. 安装本地嵌入模型 (sentence-transformers)
+3. 安装FAISS (faiss-cpu)
+4. 注入模拟酒店咨询数据
+5. 添加聊天接口
+6. 安装前端依赖，添加聊天页面
+7. 启动前后端
+
+
+## 执行结果
+
+### ✅ 安装的依赖
+- fastapi, uvicorn, sqlalchemy, python-dotenv, alembic, fastapi-pagination
+- mem0ai (v2.0.0), mcp
+- faiss-cpu (v1.13.2)
+- sentence-transformers (v5.4.1)
+- tenacity
+
+### ✅ 修改的文件
+1. api/app/utils/categorization.py - 改为Mock模式（无需API Key，使用关键词分类）
+2. api/app/routers/__init__.py - 注册chat路由
+3. api/main.py - 添加chat路由
+4. ui/components/Navbar.tsx - 添加「酒店咨询」导航
+
+### ✅ 新建的文件
+1. api/.env - 后端环境变量（MOCK_MODE=true, FAISS_PATH=./faiss_store）
+2. api/app/routers/chat.py - 聊天接口（关键词匹配+记忆搜索）
+3. api/seed_hotel_data.py - 酒店咨询数据种子脚本
+4. ui/.env.local - 前端环境变量
+5. ui/app/chat/page.tsx - 聊天页面
+
+### ✅ 模拟数据（48条酒店微信咨询记录）
+- 房型价格（标准间/大床房/双床房/套房）
+- 早餐服务（时间/品种/价格）
+- 停车服务（免费/车位数）
+- 入住/退房规则
+- 酒店设施（游泳池/健身房/SPA/会议室）
+- 预订及取消政策
+- 酒店位置及交通
+- 发票开具
+- 微信客服真实对话记录
+
+### ✅ 运行状态
+- 后端 API: http://localhost:8765
+- 前端 UI:  http://localhost:3000
+- 聊天页面: http://localhost:3000/chat
+- API文档:  http://localhost:8765/docs
+
+### 关键设计
+- 无API Key：使用关键词匹配响应+规则分类（不调用OpenAI）
+- FAISS数据库：通过FAISS_PATH=./faiss_store配置（mem0自动使用）
+- 聊天功能：支持快捷问题、历史对话查看、记忆来源显示
+
