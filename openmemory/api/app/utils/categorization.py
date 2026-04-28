@@ -64,12 +64,10 @@ def get_categories_for_memory(memory: str) -> List[str]:
     """
     provider_alias = os.getenv("LLM_PROVIDER", "openai").lower()
 
-    # Resolve API key via provider registry
-    from app.utils.providers import get_provider
+    # Resolve API key via provider registry (checks primary + alias env vars)
+    from app.utils.providers import get_provider, resolve_api_key
     provider_def = get_provider(provider_alias)
-    api_key = ""
-    if provider_def and provider_def.api_key_env:
-        api_key = os.environ.get(provider_def.api_key_env, "")
+    api_key = resolve_api_key(provider_alias)
 
     if _is_mock_mode(provider_alias, api_key):
         return _mock_categorize(memory)

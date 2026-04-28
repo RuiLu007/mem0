@@ -35,7 +35,7 @@ import socket
 
 from app.database import SessionLocal
 from app.models import Config as ConfigModel
-from app.utils.providers import get_provider
+from app.utils.providers import get_provider, is_real_api_key_available
 from app.utils.vector_stores import detect_vector_store
 
 from mem0 import Memory
@@ -240,9 +240,21 @@ def get_default_memory_config():
     print(f"Auto-detected vector store: {vs_strategy.provider_name} "
           f"with config: {vs_section['config']}")
 
+    # ── Auto mock-mode detection ──────────────────────────────────────────────
+    # If MOCK_MODE is not explicitly set and no real API key is available,
+    # automatically enable mock mode so the system can run without API keys.
+    llm_provider_alias = os.environ.get('LLM_PROVIDER', 'openai').lower()
+    explicit_mock = os.environ.get('MOCK_MODE', '').lower()
+    if explicit_mock == '':
+        if not is_real_api_key_available(llm_provider_alias):
+            print(f"[INFO] No real API key found for provider '{llm_provider_alias}'. "
+                  "Auto-enabling MOCK_MODE=true. Set MOCK_MODE=false + a real API key to use live LLMs.")
+            os.environ['MOCK_MODE'] = 'true'
+        else:
+            print(f"[INFO] Real API key detected for '{llm_provider_alias}'. Running in production mode.")
+            os.environ['MOCK_MODE'] = 'false'
 
     # Detect LLM provider from environment variables, with registry-based resolution
-    llm_provider_alias = os.environ.get('LLM_PROVIDER', 'openai').lower()
     llm_provider_def = get_provider(llm_provider_alias)
     # mem0_llm_provider is the name mem0 understands (e.g. "openai" for both openai and qwen)
     mem0_llm_provider = llm_provider_def.mem0_provider if llm_provider_def else llm_provider_alias
@@ -273,31 +285,41 @@ def get_default_memory_config():
     print(f"Auto-detected LLM provider: {llm_provider_alias} (mem0: {mem0_llm_provider})")
 
     # Detect embedder provider — default follows LLM provider (same vendor is most compatible)
-    embedder_provider_alias = os.environ.get('EMBEDDER_PROVIDER', llm_provider_alias).lower()
-    embedder_provider_def = get_provider(embedder_provider_alias)
-    mem0_embedder_provider = embedder_provider_def.mem0_provider if embedder_provider_def else embedder_provider_alias
+    # In mock mode (no real API key), fall back to a local HuggingFace embedder so that
+    # memory storage actually works without any cloud API calls.
+    is_mock = os.environ.get('MOCK_MODE', 'false').lower() == 'true'
+    if is_mock and not is_real_api_key_available(llm_provider_alias):
+        # Use local sentence-transformers embedder — no API key required
+        mem0_embedder_provider = "huggingface"
+        local_hf_model = os.environ.get('HF_EMBED_MODEL', 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+        embedder_config = {"model": local_hf_model}
+        embedder_provider_alias = "huggingface"
+        print(f"[MOCK] No real API key → using local HuggingFace embedder: {local_hf_model}")
+    else:
+        embedder_provider_alias = os.environ.get('EMBEDDER_PROVIDER', llm_provider_alias).lower()
+        embedder_provider_def = get_provider(embedder_provider_alias)
+        mem0_embedder_provider = embedder_provider_def.mem0_provider if embedder_provider_def else embedder_provider_alias
 
-    embedder_model = (
-        os.environ.get('EMBEDDER_MODEL')
-        or (embedder_provider_def.default_embedder_model if embedder_provider_def else None)
-    )
-    embedder_api_key = (
-        os.environ.get('EMBEDDER_API_KEY')
-        or (os.environ.get(embedder_provider_def.api_key_env) if embedder_provider_def and embedder_provider_def.api_key_env else None)
-    )
-    embedder_base_url = (
-        os.environ.get('EMBEDDER_BASE_URL')
-        or (embedder_provider_def.base_url if embedder_provider_def else None)
-    )
-
-    embedder_config = _create_embedder_config(
-        provider=mem0_embedder_provider,
-        model=embedder_model,
-        api_key=embedder_api_key,
-        base_url=embedder_base_url,
-        ollama_base_url=ollama_base_url,
-        llm_base_url=llm_base_url,
-    )
+        embedder_model = (
+            os.environ.get('EMBEDDER_MODEL')
+            or (embedder_provider_def.default_embedder_model if embedder_provider_def else None)
+        )
+        embedder_api_key = (
+            os.environ.get('EMBEDDER_API_KEY')
+            or (os.environ.get(embedder_provider_def.api_key_env) if embedder_provider_def and embedder_provider_def.api_key_env else None)
+        )
+        embedder_base_url = (
+            os.environ.get('EMBEDDER_BASE_URL')
+            or (embedder_provider_def.base_url if embedder_provider_def else None)
+        )
+        embedder_config = _create_embedder_config(
+            provider=mem0_embedder_provider,
+            model=embedder_model,
+            api_key=embedder_api_key,
+            base_url=embedder_base_url,
+            ollama_base_url=ollama_base_url,
+            llm_base_url=llm_base_url,
+        )
     print(f"Auto-detected embedder provider: {embedder_provider_alias} (mem0: {mem0_embedder_provider})")
 
     return {

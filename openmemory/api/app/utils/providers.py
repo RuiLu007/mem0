@@ -9,18 +9,19 @@ To add a new provider:
 """
 
 import os
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass
 class ProviderDef:
     """Definition for an LLM/Embedder provider."""
     mem0_provider: str           # The provider name mem0 understands internally
-    api_key_env: str             # Environment variable name for the API key (empty = no key needed)
+    api_key_env: str             # Primary environment variable for the API key (empty = no key needed)
     default_llm_model: str       # Default LLM model name
     default_embedder_model: str  # Default embedding model name
-    base_url: Optional[str] = None  # API base URL override (for OpenAI-compatible endpoints)
+    base_url: Optional[str] = None              # API base URL override (for OpenAI-compatible endpoints)
+    api_key_env_aliases: List[str] = field(default_factory=list)  # Additional env var aliases (checked if primary is empty)
 
 
 # Registry maps user-facing provider alias → ProviderDef
@@ -35,6 +36,7 @@ PROVIDER_REGISTRY: Dict[str, ProviderDef] = {
     "qwen": ProviderDef(
         mem0_provider="openai",          # Qwen uses the OpenAI-compatible API
         api_key_env="DASHSCOPE_API_KEY",
+        api_key_env_aliases=["QWEN_API_KEY"],  # QWEN_API_KEY is accepted as an alias
         default_llm_model="qwen-plus",
         default_embedder_model="text-embedding-v3",
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -90,14 +92,38 @@ def list_providers() -> Dict[str, dict]:
 def resolve_api_key(provider_name: str, override: Optional[str] = None) -> str:
     """
     Resolve API key for a provider.
-    Priority: explicit override → provider-specific env var.
+    Priority: explicit override → primary env var → alias env vars.
     """
     if override:
         return override
     provider = get_provider(provider_name)
-    if provider and provider.api_key_env:
-        return os.environ.get(provider.api_key_env, "")
+    if not provider:
+        return ""
+    if provider.api_key_env:
+        key = os.environ.get(provider.api_key_env, "")
+        if key:
+            return key
+    # Try alias env vars (e.g. QWEN_API_KEY alongside DASHSCOPE_API_KEY)
+    for alias_env in provider.api_key_env_aliases:
+        key = os.environ.get(alias_env, "")
+        if key:
+            return key
     return ""
+
+
+def is_real_api_key_available(provider_name: str) -> bool:
+    """
+    Return True if the provider has a real (non-mock) API key configured.
+    A key is considered mock if it is empty, starts with 'sk-mock', or equals 'no-key'.
+    """
+    if not provider_name:
+        return False
+    provider = get_provider(provider_name)
+    if provider and not provider.api_key_env and not provider.api_key_env_aliases:
+        # Providers like ollama don't need a key — treat as available
+        return True
+    key = resolve_api_key(provider_name)
+    return bool(key) and not key.startswith("sk-mock") and key != "no-key"
 
 
 def make_openai_client(

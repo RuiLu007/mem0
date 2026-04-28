@@ -1,3 +1,4 @@
+import os
 import logging
 from datetime import UTC, datetime
 from typing import List, Optional, Set
@@ -254,8 +255,14 @@ async def create_memory(
             "error": str(client_error)
         }
 
-    # Try to save to Qdrant via memory_client
+    # Try to save to vector store via memory_client
     try:
+        # In mock mode (no real LLM key), disable inference to avoid calling external LLM.
+        # The full text is stored as-is, and categorisation uses keyword rules.
+        use_infer = request.infer
+        if os.getenv("MOCK_MODE", "false").lower() == "true":
+            use_infer = False
+
         qdrant_response = memory_client.add(
             request.text,
             user_id=request.user_id,  # Use string user_id to match search
@@ -263,7 +270,7 @@ async def create_memory(
                 "source_app": "openmemory",
                 "mcp_client": request.app,
             },
-            infer=request.infer
+            infer=use_infer
         )
         
         # Log the response for debugging
