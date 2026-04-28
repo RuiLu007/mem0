@@ -3,6 +3,7 @@ import os
 from typing import List
 
 from app.utils.prompts import MEMORY_CATEGORIZATION_PROMPT
+from app.utils.providers import make_openai_client
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -34,30 +35,56 @@ def _mock_categorize(memory: str) -> List[str]:
     return matched if matched else ["general"]
 
 
+def _is_mock_mode(provider_alias: str, api_key: str) -> bool:
+    """Return True when real LLM calls should be skipped."""
+    if os.getenv("MOCK_MODE", "false").lower() == "true":
+        return True
+    # Ollama doesn't use the structured-output parse endpoint
+    if provider_alias == "ollama":
+        return True
+    if not api_key or api_key.startswith("sk-mock") or api_key == "no-key":
+        return True
+    return False
+
+
 class MemoryCategories(BaseModel):
     categories: List[str]
 
 
 def get_categories_for_memory(memory: str) -> List[str]:
-    """Get categories for a memory. Uses mock mode if MOCK_MODE=true or no valid API key."""
-    mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    
-    # Use mock categorization if mock mode or no real API key
-    if mock_mode or not api_key or api_key.startswith("sk-mock"):
-        return _mock_categorize(memory)
-    
-    try:
-        from openai import OpenAI
-        from tenacity import retry, stop_after_attempt, wait_exponential
+    """
+    Get categories for a memory.
 
-        openai_client = OpenAI(api_key=api_key)
+    Uses the active LLM provider (from LLM_PROVIDER env) to call the
+    structured-output parse endpoint. Falls back to keyword rules when:
+    - MOCK_MODE=true
+    - Provider is ollama (no parse endpoint)
+    - No valid API key found
+    - Any API call fails
+    """
+    provider_alias = os.getenv("LLM_PROVIDER", "openai").lower()
+
+    # Resolve API key via provider registry
+    from app.utils.providers import get_provider
+    provider_def = get_provider(provider_alias)
+    api_key = ""
+    if provider_def and provider_def.api_key_env:
+        api_key = os.environ.get(provider_def.api_key_env, "")
+
+    if _is_mock_mode(provider_alias, api_key):
+        return _mock_categorize(memory)
+
+    # Determine model for categorization
+    model = os.getenv("LLM_MODEL") or (provider_def.default_llm_model if provider_def else "gpt-4o-mini")
+
+    try:
+        client = make_openai_client(provider_alias)
         messages = [
             {"role": "system", "content": MEMORY_CATEGORIZATION_PROMPT},
             {"role": "user", "content": memory}
         ]
-        completion = openai_client.beta.chat.completions.parse(
-            model="gpt-4o-mini",
+        completion = client.beta.chat.completions.parse(
+            model=model,
             messages=messages,
             response_format=MemoryCategories,
             temperature=0
@@ -65,5 +92,5 @@ def get_categories_for_memory(memory: str) -> List[str]:
         parsed: MemoryCategories = completion.choices[0].message.parsed
         return [cat.strip().lower() for cat in parsed.categories]
     except Exception as e:
-        logging.warning(f"[WARN] OpenAI categorization failed, using mock: {e}")
+        logging.warning(f"[WARN] LLM categorization failed ({provider_alias}), using mock: {e}")
         return _mock_categorize(memory)

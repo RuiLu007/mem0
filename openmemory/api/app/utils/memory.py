@@ -27,6 +27,7 @@ Example configuration that will be automatically adjusted:
 }
 """
 
+import copy
 import hashlib
 import json
 import os
@@ -34,6 +35,7 @@ import socket
 
 from app.database import SessionLocal
 from app.models import Config as ConfigModel
+from app.utils.providers import get_provider
 
 from mem0 import Memory
 
@@ -159,7 +161,12 @@ _LLM_CONFIG_FACTORIES = {
 
 
 def _create_llm_config(provider, model, api_key, base_url, ollama_base_url):
-    """Build LLM config using registered provider factory or generic fallback."""
+    """
+    Build LLM config dict for mem0.
+
+    `provider` here is already the mem0-native provider name (after registry
+    translation), e.g. "openai" even when the user chose "qwen".
+    """
     base_config = {
         "temperature": 0.1,
         "max_tokens": 2000,
@@ -327,37 +334,64 @@ def get_default_memory_config():
     
     print(f"Auto-detected vector store: {vector_store_provider} with config: {vector_store_config}")
 
-    # Detect LLM provider from environment variables
-    llm_provider = os.environ.get('LLM_PROVIDER', 'openai').lower()
-    llm_model = os.environ.get('LLM_MODEL')
-    llm_api_key = os.environ.get('LLM_API_KEY')
-    llm_base_url = os.environ.get('LLM_BASE_URL')
+    # Detect LLM provider from environment variables, with registry-based resolution
+    llm_provider_alias = os.environ.get('LLM_PROVIDER', 'openai').lower()
+    llm_provider_def = get_provider(llm_provider_alias)
+    # mem0_llm_provider is the name mem0 understands (e.g. "openai" for both openai and qwen)
+    mem0_llm_provider = llm_provider_def.mem0_provider if llm_provider_def else llm_provider_alias
+
+    llm_model = (
+        os.environ.get('LLM_MODEL')
+        or (llm_provider_def.default_llm_model if llm_provider_def else None)
+    )
+    # LLM_API_KEY overrides; fall back to provider-specific env var from registry
+    llm_api_key = (
+        os.environ.get('LLM_API_KEY')
+        or (os.environ.get(llm_provider_def.api_key_env) if llm_provider_def and llm_provider_def.api_key_env else None)
+    )
+    # LLM_BASE_URL overrides; fall back to provider default from registry
+    llm_base_url = (
+        os.environ.get('LLM_BASE_URL')
+        or (llm_provider_def.base_url if llm_provider_def else None)
+    )
     ollama_base_url = os.environ.get('OLLAMA_BASE_URL')
 
     llm_config = _create_llm_config(
-        provider=llm_provider,
+        provider=mem0_llm_provider,
         model=llm_model,
         api_key=llm_api_key,
         base_url=llm_base_url,
         ollama_base_url=ollama_base_url,
     )
-    print(f"Auto-detected LLM provider: {llm_provider}")
+    print(f"Auto-detected LLM provider: {llm_provider_alias} (mem0: {mem0_llm_provider})")
 
-    # Detect embedder provider from environment variables
-    embedder_provider = os.environ.get('EMBEDDER_PROVIDER', llm_provider if llm_provider == 'ollama' else 'openai').lower()
-    embedder_model = os.environ.get('EMBEDDER_MODEL')
-    embedder_api_key = os.environ.get('EMBEDDER_API_KEY')
-    embedder_base_url = os.environ.get('EMBEDDER_BASE_URL')
+    # Detect embedder provider — default follows LLM provider (same vendor is most compatible)
+    embedder_provider_alias = os.environ.get('EMBEDDER_PROVIDER', llm_provider_alias).lower()
+    embedder_provider_def = get_provider(embedder_provider_alias)
+    mem0_embedder_provider = embedder_provider_def.mem0_provider if embedder_provider_def else embedder_provider_alias
+
+    embedder_model = (
+        os.environ.get('EMBEDDER_MODEL')
+        or (embedder_provider_def.default_embedder_model if embedder_provider_def else None)
+    )
+    embedder_api_key = (
+        os.environ.get('EMBEDDER_API_KEY')
+        or (os.environ.get(embedder_provider_def.api_key_env) if embedder_provider_def and embedder_provider_def.api_key_env else None)
+    )
+    embedder_base_url = (
+        os.environ.get('EMBEDDER_BASE_URL')
+        or (embedder_provider_def.base_url if embedder_provider_def else None)
+    )
 
     embedder_config = _create_embedder_config(
-        provider=embedder_provider,
+        provider=mem0_embedder_provider,
         model=embedder_model,
         api_key=embedder_api_key,
         base_url=embedder_base_url,
         ollama_base_url=ollama_base_url,
         llm_base_url=llm_base_url,
     )
-    print(f"Auto-detected embedder provider: {embedder_provider}")
+    print(f"Auto-detected embedder provider: {embedder_provider_alias} (mem0: {mem0_embedder_provider})")
 
     return {
         "vector_store": {
@@ -365,15 +399,52 @@ def get_default_memory_config():
             "config": vector_store_config
         },
         "llm": {
-            "provider": llm_provider,
+            "provider": mem0_llm_provider,
             "config": llm_config
         },
         "embedder": {
-            "provider": embedder_provider,
+            "provider": mem0_embedder_provider,
             "config": embedder_config
         },
         "version": "v1.1"
     }
+
+
+def _normalize_provider_section(section: dict) -> dict:
+    """
+    Translate a user-facing provider alias in a config section to what mem0 expects.
+
+    For example, when a user stores {"provider": "qwen", "config": {...}} in the DB,
+    this function rewrites it to {"provider": "openai", "config": {..., "openai_base_url": ..., "api_key": ...}}
+    so that mem0 can process it with its native OpenAI driver.
+
+    Sections whose provider is already a native mem0 name pass through unchanged.
+    """
+    if not section or "provider" not in section:
+        return section
+
+    alias = section["provider"].lower()
+    provider_def = get_provider(alias)
+
+    if provider_def is None:
+        return section  # Unknown provider — leave as-is and let mem0 handle/error
+
+    if provider_def.mem0_provider == alias:
+        return section  # Already a native mem0 provider name; no translation needed
+
+    section = copy.deepcopy(section)
+    section["provider"] = provider_def.mem0_provider
+    cfg = section.setdefault("config", {})
+
+    # Inject base_url (e.g. Qwen's DashScope endpoint) if not already present
+    if provider_def.base_url and "openai_base_url" not in cfg:
+        cfg["openai_base_url"] = provider_def.base_url
+
+    # Inject api_key from the provider-specific env var if not already set
+    if provider_def.api_key_env and "api_key" not in cfg:
+        cfg["api_key"] = f"env:{provider_def.api_key_env}"
+
+    return section
 
 
 def _parse_environment_variables(config_dict):
@@ -441,11 +512,11 @@ def get_memory_client(custom_instructions: str = None):
                     
                     # Update LLM configuration if available
                     if "llm" in mem0_config and mem0_config["llm"] is not None:
-                        config["llm"] = mem0_config["llm"]
+                        config["llm"] = _normalize_provider_section(mem0_config["llm"])
 
                     # Update Embedder configuration if available
                     if "embedder" in mem0_config and mem0_config["embedder"] is not None:
-                        config["embedder"] = mem0_config["embedder"]
+                        config["embedder"] = _normalize_provider_section(mem0_config["embedder"])
 
                     if "vector_store" in mem0_config and mem0_config["vector_store"] is not None:
                         config["vector_store"] = mem0_config["vector_store"]

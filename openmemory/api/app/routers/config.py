@@ -15,18 +15,20 @@ class LLMConfig(BaseModel):
     max_tokens: int = Field(..., description="Maximum tokens to generate")
     api_key: Optional[str] = Field(None, description="API key or 'env:API_KEY' to use environment variable")
     ollama_base_url: Optional[str] = Field(None, description="Base URL for Ollama server (e.g., http://host.docker.internal:11434)")
+    openai_base_url: Optional[str] = Field(None, description="Base URL override for OpenAI-compatible APIs (e.g. Qwen DashScope)")
 
 class LLMProvider(BaseModel):
-    provider: str = Field(..., description="LLM provider name")
+    provider: str = Field(..., description="LLM provider name (openai, qwen, ollama, ...)")
     config: LLMConfig
 
 class EmbedderConfig(BaseModel):
     model: str = Field(..., description="Embedder model name")
     api_key: Optional[str] = Field(None, description="API key or 'env:API_KEY' to use environment variable")
     ollama_base_url: Optional[str] = Field(None, description="Base URL for Ollama server (e.g., http://host.docker.internal:11434)")
+    openai_base_url: Optional[str] = Field(None, description="Base URL override for OpenAI-compatible APIs (e.g. Qwen DashScope)")
 
 class EmbedderProvider(BaseModel):
-    provider: str = Field(..., description="Embedder provider name")
+    provider: str = Field(..., description="Embedder provider name (openai, qwen, ollama, ...)")
     config: EmbedderConfig
 
 class VectorStoreProvider(BaseModel):
@@ -131,6 +133,13 @@ def save_config_to_db(db: Session, config: Dict[str, Any], key: str = "main"):
     db.commit()
     db.refresh(db_config)
     return db_config.value
+
+@router.get("/providers")
+async def list_supported_providers():
+    """List all supported LLM/embedder providers and their defaults."""
+    from app.utils.providers import list_providers
+    return list_providers()
+
 
 @router.get("/", response_model=ConfigSchema)
 async def get_configuration(db: Session = Depends(get_db)):
